@@ -105,6 +105,17 @@ async function handleNativeMessage(message: unknown): Promise<void> {
     postNative({ type: "status_response", nativeConnected, state: await popupState() });
     return;
   }
+  if (
+    isObject(message) &&
+    (message.type === "mcp_connected" ||
+      message.type === "mcp_disconnected" ||
+      message.type === "status_response" ||
+      message.type === "notification")
+  ) {
+    nativeConnected = message.type !== "mcp_disconnected";
+    logger.debug("Received native host notification", { type: String(message.type) });
+    return;
+  }
   nativeConnected = true;
 
   const request = normalizeToolRequest(message);

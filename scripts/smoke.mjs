@@ -48,6 +48,10 @@ socket.on("data", (chunk) => {
     if (message.type === "mcp_connected") {
       continue;
     }
+    if (message.requestId && message.requestId !== request.requestId) {
+      console.error(`Ignoring response for ${message.requestId}; waiting for ${request.requestId}.`);
+      continue;
+    }
     clearTimeout(timer);
     console.log(JSON.stringify(message, null, 2));
     socket.end();
