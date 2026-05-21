@@ -420,8 +420,8 @@ async function withPagePermission(request: ToolRequest, dispatch: () => Promise<
 }
 
 async function sendContent(tabId: number, message: JsonObject): Promise<JsonObject & { ok: boolean; code?: string; message?: string; candidates?: BrowserCandidate[]; matches?: BrowserCandidate[]; text?: string; title?: string; url?: string; activeElement?: JsonObject; details?: JsonObject }> {
-  await injectContentScript(tabId);
   try {
+    await injectContentScript(tabId);
     return await chrome.tabs.sendMessage(tabId, message);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
