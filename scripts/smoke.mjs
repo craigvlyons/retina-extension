@@ -13,60 +13,86 @@ if (!socketPath) {
   throw new Error(`No socketPath in ${statusPath}`);
 }
 
-const request = {
+if (params.urlIncludes && !params.tabId) {
+  const tabs = await callBridge("tabs_context_mcp", {});
+  const needle = String(params.urlIncludes);
+  const tab = tabs.structuredContent?.tabs?.find((item) => item.url?.includes(needle));
+  if (!tab) {
+    console.error(`No tab URL includes ${needle}`);
+    console.error(JSON.stringify(tabs.structuredContent?.tabs || [], null, 2));
+    process.exit(1);
+  }
+  params.tabId = tab.tabId;
+  delete params.urlIncludes;
+}
+
+if (params.titleIncludes && !params.tabId) {
+  const tabs = await callBridge("tabs_context_mcp", {});
+  const needle = String(params.titleIncludes).toLowerCase();
+  const tab = tabs.structuredContent?.tabs?.find((item) => item.title?.toLowerCase().includes(needle));
+  if (!tab) {
+    console.error(`No tab title includes ${needle}`);
+    console.error(JSON.stringify(tabs.structuredContent?.tabs || [], null, 2));
+    process.exit(1);
+  }
+  params.tabId = tab.tabId;
+  delete params.titleIncludes;
+}
+
+const message = await callBridge(method, params);
+console.log(JSON.stringify(message, null, 2));
+
+async function callBridge(methodName, requestParams) {
+  const request = {
   type: "tool_request",
-  method,
-  params,
+  method: methodName,
+  params: requestParams,
   requestId: `smoke-${Date.now()}`,
   compatibilityServerName: "claude-in-chrome",
   bridgeKind: "retina-browser-bridge",
   protocol: "source_chrome_mcp_compatibility"
-};
+  };
 
-const socket = connect(socketPath);
-let buffer = Buffer.alloc(0);
-let sent = false;
-const timer = setTimeout(() => {
-  console.error("Timed out waiting for bridge response.");
-  socket.destroy();
-  process.exit(1);
-}, 15_000);
+  return new Promise((resolve, reject) => {
+    const socket = connect(socketPath);
+    let buffer = Buffer.alloc(0);
+    let sent = false;
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("Timed out waiting for bridge response."));
+    }, 15_000);
 
-socket.on("connect", () => {
-  sent = true;
-  socket.write(encode(request));
-});
+    socket.on("connect", () => {
+      sent = true;
+      socket.write(encode(request));
+    });
 
-socket.on("data", (chunk) => {
-  buffer = Buffer.concat([buffer, chunk]);
-  while (buffer.length >= 4) {
-    const length = buffer.readUInt32LE(0);
-    if (buffer.length < 4 + length) return;
-    const raw = buffer.subarray(4, 4 + length).toString("utf8");
-    buffer = buffer.subarray(4 + length);
-    const message = JSON.parse(raw);
-    if (message.type === "mcp_connected") {
-      continue;
-    }
-    if (message.requestId && message.requestId !== request.requestId) {
-      console.error(`Ignoring response for ${message.requestId}; waiting for ${request.requestId}.`);
-      continue;
-    }
-    clearTimeout(timer);
-    console.log(JSON.stringify(message, null, 2));
-    socket.end();
-    return;
-  }
-});
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 4) {
+        const length = buffer.readUInt32LE(0);
+        if (buffer.length < 4 + length) return;
+        const raw = buffer.subarray(4, 4 + length).toString("utf8");
+        buffer = buffer.subarray(4 + length);
+        const response = JSON.parse(raw);
+        if (response.type === "mcp_connected") continue;
+        if (response.requestId && response.requestId !== request.requestId) continue;
+        clearTimeout(timer);
+        socket.end();
+        resolve(response);
+        return;
+      }
+    });
 
-socket.on("error", (error) => {
-  clearTimeout(timer);
-  console.error(`Failed to connect to ${socketPath}: ${error.message}`);
-  if (!sent) {
-    console.error("Open the extension popup or click Reload on chrome://extensions, then run this again.");
-  }
-  process.exit(1);
-});
+    socket.on("error", (error) => {
+      clearTimeout(timer);
+      if (!sent) {
+        error.message += " Open the Retina Browser Bridge popup or click Reload on chrome://extensions, then run this again.";
+      }
+      reject(error);
+    });
+  });
+}
 
 async function readStatus() {
   try {
