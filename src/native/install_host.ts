@@ -1,9 +1,9 @@
-#!/usr/bin/env node
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {
+  EXTENSION_ID,
   NATIVE_HOST_DESCRIPTION,
   NATIVE_HOST_ID,
   NATIVE_HOST_MANIFEST
@@ -25,9 +25,9 @@ for (let i = 2; i < process.argv.length; i += 1) {
   }
 }
 
-const extensionId = String(args.get("extension-id") || "");
+const extensionId = String(args.get("extension-id") || EXTENSION_ID);
 if (!/^[a-p]{32}$/.test(extensionId)) {
-  console.error("Usage: retina-browser-bridge-install-host --extension-id <32-char chrome extension id> [--browser chrome|brave|edge|chromium|chrome_for_testing]");
+  console.error("Usage: retina-browser-bridge-install-host [--extension-id <32-char chrome extension id>] [--browser chrome|brave|edge|chromium|chrome_for_testing]");
   process.exit(2);
 }
 
@@ -93,4 +93,3 @@ function nativeMessagingManifestPath(browser: Browser): string {
   }
   throw new Error(`Unsupported platform: ${platform()}`);
 }
-

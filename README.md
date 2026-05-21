@@ -53,21 +53,25 @@ dist/extension
 1. Build the project.
 2. Open `chrome://extensions`, enable Developer Mode, and load
    `dist/extension` as an unpacked extension.
-3. Copy the extension id from Chrome.
-4. Install the native host manifest:
+3. Install the native host manifest:
 
 ```sh
-npm run install-host -- --extension-id <extension-id>
+npm run install-host
 ```
 
 For Brave, Edge, Chromium, or Chrome for Testing:
 
 ```sh
-npm run install-host -- --extension-id <extension-id> --browser brave
+npm run install-host -- --browser brave
 ```
 
 The installer writes a wrapper script under `~/.retina/browser-bridge/` and a
 browser native-host manifest named `com.retina.browser_bridge.json`.
+The unpacked extension has a fixed development id:
+
+```text
+lefpojfbfejboofinaodnoadplihdbhm
+```
 
 ## Local Socket
 

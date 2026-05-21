@@ -25,7 +25,7 @@ import type {
 type NativePort = chrome.runtime.Port;
 type DebugEvent = { tabId: number; ts: number; kind: "console" | "network"; level?: string; message?: string; url?: string; method?: string; status?: number; requestId?: string; data?: JsonObject };
 
-const logger = new BridgeLogger("retina-extension-service-worker");
+const logger = new BridgeLogger("retina-extension-service-worker", (line) => console.info(line));
 let nativePort: NativePort | null = null;
 let nativeConnected = false;
 let reconnectTimer: number | null = null;

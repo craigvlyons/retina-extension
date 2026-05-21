@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { createServer, type Server, type Socket } from "node:net";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
