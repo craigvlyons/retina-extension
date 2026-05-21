@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "install-host": "node dist/native/install_host.js",
-    "host": "node dist/native/host.js"
+    "host": "node dist/native/host.js",
+    "smoke": "node scripts/smoke.mjs"
   },
   "bin": {
     "retina-browser-bridge-host": "./dist/native/host.js",
