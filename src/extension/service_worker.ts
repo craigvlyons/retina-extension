@@ -597,6 +597,7 @@ async function popupState(): Promise<PopupState> {
         }
       : undefined;
   return {
+    extensionId: chrome.runtime.id,
     nativeConnected,
     controlEnabled: settings.controlEnabled,
     debuggerEnabled: settings.debuggerEnabled,

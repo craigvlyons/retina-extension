@@ -177,6 +177,7 @@ export type ExtensionSettings = {
 };
 
 export type PopupState = {
+  extensionId: string;
   nativeConnected: boolean;
   controlEnabled: boolean;
   debuggerEnabled: boolean;
@@ -185,4 +186,3 @@ export type PopupState = {
   lastError?: string;
   sessions: string[];
 };
-

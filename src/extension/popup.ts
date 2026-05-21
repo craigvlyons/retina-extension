@@ -34,7 +34,7 @@ function render(state: PopupState): void {
   debuggerToggle.checked = state.debuggerEnabled;
   const native = state.nativeConnected ? "Native host connected" : "Native host disconnected";
   const control = state.controlEnabled ? "control enabled" : "control paused";
-  statusEl.textContent = `${native}; ${control}`;
+  statusEl.textContent = `${native}; ${control}\nID: ${state.extensionId}`;
   if (state.activeTab) {
     const permission = state.activeTab.permissionState;
     tabEl.textContent = `${state.activeTab.title || "Untitled"}\n${state.activeTab.url || ""}\nPermission: ${permission}`;
@@ -46,4 +46,3 @@ function render(state: PopupState): void {
     revokeButton.disabled = true;
   }
 }
-
