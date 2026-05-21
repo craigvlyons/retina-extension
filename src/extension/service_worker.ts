@@ -411,10 +411,7 @@ async function withPagePermission(request: ToolRequest, dispatch: () => Promise<
     return errorResponse(request, "permission_required", "origin_permission_required", "Grant this origin in the Retina extension popup before mutating browser state.", { tabId, url: tab?.url || null, permissionState: permission }, true);
   }
   if (permission !== "granted" && ["read_page", "get_page_text", "find", "read_console_messages", "read_network_requests"].includes(request.method)) {
-    const active = await activeTab();
-    if (active?.id !== tabId) {
-      return errorResponse(request, "permission_required", "origin_permission_required", "Read access requires origin permission unless the tab is active.", { tabId, url: tab?.url || null, permissionState: permission }, true);
-    }
+    return errorResponse(request, "permission_required", "origin_permission_required", "Grant this origin in the Retina extension popup before reading page content.", { tabId, url: tab?.url || null, permissionState: permission }, true);
   }
   if (typeof params.sessionId === "string" && sessionTabs.has(tabId) && sessionTabs.get(tabId) !== params.sessionId) {
     return errorResponse(request, "permission_required", "tab_owned_by_another_session", "This tab is owned by another Retina browser session.", { tabId, owner: sessionTabs.get(tabId) }, true);
@@ -424,7 +421,17 @@ async function withPagePermission(request: ToolRequest, dispatch: () => Promise<
 
 async function sendContent(tabId: number, message: JsonObject): Promise<JsonObject & { ok: boolean; code?: string; message?: string; candidates?: BrowserCandidate[]; matches?: BrowserCandidate[]; text?: string; title?: string; url?: string; activeElement?: JsonObject; details?: JsonObject }> {
   await injectContentScript(tabId);
-  return chrome.tabs.sendMessage(tabId, message);
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      code: "content_script_unavailable",
+      message: text,
+      details: { tabId }
+    };
+  }
 }
 
 async function injectContentScript(tabId: number): Promise<void> {
@@ -432,9 +439,8 @@ async function injectContentScript(tabId: number): Promise<void> {
     await chrome.scripting.executeScript({ target: { tabId, allFrames: false }, files: ["content_script.js"] });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("Cannot access") && !message.includes("Missing host permission")) {
-      logger.debug("Content script injection reported a non-fatal error", { tabId, message });
-    }
+    logger.debug("Content script injection failed", { tabId, message });
+    throw error;
   }
 }
 
