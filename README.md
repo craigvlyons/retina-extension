@@ -104,6 +104,9 @@ Chrome native messaging.
 - Debugger tooling is runtime opt-in from the popup, but Chrome requires the
   `debugger` manifest permission to be listed as a normal permission rather than
   an optional permission.
+- Development builds declare `http://*/*` and `https://*/*` host permissions so
+  smoke tests can run without fighting Chrome's optional-permission prompt. The
+  popup grant/revoke path remains in place for a stricter packaged build.
 - Session-owned tabs by default. The service worker records `sessionId` ownership
   when provided and rejects cross-session mutation.
 

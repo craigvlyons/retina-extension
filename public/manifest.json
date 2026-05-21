@@ -14,10 +14,6 @@
     "windows",
     "debugger"
   ],
-  "optional_host_permissions": [
-    "http://*/*",
-    "https://*/*"
-  ],
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"
@@ -26,7 +22,10 @@
     "default_title": "Retina Browser Bridge",
     "default_popup": "popup.html"
   },
-  "host_permissions": [],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "web_accessible_resources": [
     {
       "resources": ["content_script.js"],
