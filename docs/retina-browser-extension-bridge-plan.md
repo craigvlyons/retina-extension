@@ -11,6 +11,9 @@ Retina remains the reference runtime and contract owner.
 
 ## Current Retina Contract To Preserve
 
+retina project we are building extension for.
+`/Users/macc/projects/personal/retina/`
+
 Retina already has the browser lane shaped around the source Chrome MCP tools.
 The extension must speak this contract first, then add implementation behind it.
 
@@ -607,6 +610,7 @@ Skip:
   by default with explicit share/transfer.
 
 ## Source References
+base folder: /Users/macc/projects/personal/retina/docs
 
 - Retina browser constants and source Chrome tool names:
   `rust_source/src/browser.rs`

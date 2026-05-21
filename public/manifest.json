@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Retina Browser Bridge",
+  "version": "0.1.0",
+  "description": "Source-compatible browser automation bridge for Retina.",
+  "minimum_chrome_version": "133",
+  "permissions": [
+    "activeTab",
+    "nativeMessaging",
+    "scripting",
+    "storage",
+    "tabs",
+    "windows"
+  ],
+  "optional_permissions": [
+    "debugger"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "service_worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Retina Browser Bridge",
+    "default_popup": "popup.html"
+  },
+  "host_permissions": [],
+  "web_accessible_resources": [
+    {
+      "resources": ["content_script.js"],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ]
+}

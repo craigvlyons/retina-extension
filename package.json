@@ -1,0 +1,27 @@
+{
+  "name": "retina-browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Retina browser extension bridge with source Chrome MCP compatibility.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "install-host": "node dist/native/install_host.js",
+    "host": "node dist/native/host.js"
+  },
+  "bin": {
+    "retina-browser-bridge-host": "./dist/native/host.js",
+    "retina-browser-bridge-install-host": "./dist/native/install_host.js"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.32",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  }
+}

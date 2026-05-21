@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Retina Browser Bridge</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header>
+      <h1>Retina</h1>
+      <button id="refresh" type="button" title="Refresh status" aria-label="Refresh status">↻</button>
+    </header>
+    <main>
+      <section>
+        <div id="status" class="status">Loading...</div>
+      </section>
+      <section class="toggles">
+        <label>
+          <input id="controlEnabled" type="checkbox">
+          <span>Browser control</span>
+        </label>
+        <label>
+          <input id="debuggerEnabled" type="checkbox">
+          <span>Debugger tools</span>
+        </label>
+      </section>
+      <section>
+        <div id="tab" class="tab"></div>
+        <div class="buttons">
+          <button id="grantOrigin" type="button">Grant Site</button>
+          <button id="revokeOrigin" type="button">Revoke</button>
+        </div>
+      </section>
+      <section>
+        <button id="disconnect" class="danger" type="button">Disconnect Host</button>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
