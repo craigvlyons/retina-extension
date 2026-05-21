@@ -34,6 +34,7 @@ const extensionIds = Array.from(new Set([requestedExtensionId, EXTENSION_ID]));
 
 const browser = String(args.get("browser") || "chrome") as Browser;
 const hostPath = path.resolve(String(args.get("host-path") || path.join(process.cwd(), "dist", "native", "host.js")));
+const nodePath = path.resolve(String(args.get("node-path") || process.execPath));
 const manifestPath = nativeMessagingManifestPath(browser);
 const wrapperPath = wrapperScriptPath();
 const manifest = {
@@ -45,18 +46,18 @@ const manifest = {
 };
 
 await mkdir(path.dirname(wrapperPath), { recursive: true, mode: 0o700 });
-await writeFile(wrapperPath, wrapperContent(hostPath), { mode: 0o755 });
+await writeFile(wrapperPath, wrapperContent(hostPath, nodePath), { mode: 0o755 });
 await chmod(wrapperPath, 0o755).catch(() => undefined);
 await mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o700 });
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
 
-console.log(JSON.stringify({ ok: true, browser, manifestPath, wrapperPath, hostPath, manifest }, null, 2));
+console.log(JSON.stringify({ ok: true, browser, manifestPath, wrapperPath, hostPath, nodePath, manifest }, null, 2));
 
-function wrapperContent(host: string): string {
+function wrapperContent(host: string, node: string): string {
   if (platform() === "win32") {
-    return `@echo off\r\nnode "${host}"\r\n`;
+    return `@echo off\r\n"${node}" "${host}"\r\n`;
   }
-  return `#!/bin/sh\nexec node "${host}"\n`;
+  return `#!/bin/sh\nexec "${node}" "${host}"\n`;
 }
 
 function wrapperScriptPath(): string {
