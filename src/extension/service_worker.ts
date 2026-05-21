@@ -66,8 +66,8 @@ async function connectNative(): Promise<void> {
   if (nativePort) return;
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST_ID);
-    nativeConnected = true;
-    logger.info("Connected native host", { host: NATIVE_HOST_ID });
+    nativeConnected = false;
+    logger.info("Opened native host port", { host: NATIVE_HOST_ID });
     nativePort.onMessage.addListener((message) => void handleNativeMessage(message));
     nativePort.onDisconnect.addListener(() => {
       const error = chrome.runtime.lastError?.message || "Native host disconnected.";
@@ -96,13 +96,16 @@ function scheduleReconnect(): void {
 
 async function handleNativeMessage(message: unknown): Promise<void> {
   if (isObject(message) && message.type === "ping") {
+    nativeConnected = true;
     postNative({ type: "pong", timestamp: Date.now() });
     return;
   }
   if (isObject(message) && message.type === "get_status") {
+    nativeConnected = true;
     postNative({ type: "status_response", nativeConnected, state: await popupState() });
     return;
   }
+  nativeConnected = true;
 
   const request = normalizeToolRequest(message);
   if (!request) {
@@ -427,11 +430,6 @@ async function injectContentScript(tabId: number): Promise<void> {
 async function ensureDebugger(tabId: number, settings: ExtensionSettings): Promise<void> {
   if (!settings.debuggerEnabled) {
     throw new Error("Debugger-backed tools are disabled in the popup.");
-  }
-  const hasDebugger = await chrome.permissions.contains({ permissions: ["debugger"] });
-  if (!hasDebugger) {
-    const granted = await chrome.permissions.request({ permissions: ["debugger"] });
-    if (!granted) throw new Error("Debugger permission was not granted.");
   }
   if (attachedDebugTabs.has(tabId)) return;
   await chrome.debugger.attach({ tabId }, "1.3");

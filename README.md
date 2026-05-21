@@ -90,8 +90,9 @@ Chrome native messaging.
   side panel after mutating actions are field-tested.
 - No `webextension-polyfill` yet. The first target is Chromium-family browsers,
   so direct `chrome.*` APIs keep the runtime smaller.
-- Debugger is opt-in. Console/network/JS tools request debugger permission only
-  after the user enables elevated tools.
+- Debugger tooling is runtime opt-in from the popup, but Chrome requires the
+  `debugger` manifest permission to be listed as a normal permission rather than
+  an optional permission.
 - Session-owned tabs by default. The service worker records `sessionId` ownership
   when provided and rejects cross-session mutation.
 
@@ -101,4 +102,3 @@ Chrome native messaging.
 - [Chrome message passing](https://developer.chrome.com/docs/extensions/develop/concepts/messaging)
 - [Chrome permissions API](https://developer.chrome.com/docs/extensions/reference/api/permissions)
 - [Chrome debugger API](https://developer.chrome.com/docs/extensions/reference/api/debugger)
-

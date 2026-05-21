@@ -10,9 +10,7 @@
     "scripting",
     "storage",
     "tabs",
-    "windows"
-  ],
-  "optional_permissions": [
+    "windows",
     "debugger"
   ],
   "optional_host_permissions": [
