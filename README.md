@@ -73,6 +73,13 @@ The unpacked extension has a fixed development id:
 lefpojfbfejboofinaodnoadplihdbhm
 ```
 
+If Chrome shows a different id for an already-loaded unpacked copy, install the
+native host for that id too:
+
+```sh
+npm run install-host -- --extension-id <chrome-shown-id>
+```
+
 ## Local Socket
 
 When Chrome starts the native host, it writes status to:

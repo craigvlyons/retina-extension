@@ -25,11 +25,12 @@ for (let i = 2; i < process.argv.length; i += 1) {
   }
 }
 
-const extensionId = String(args.get("extension-id") || EXTENSION_ID);
-if (!/^[a-p]{32}$/.test(extensionId)) {
+const requestedExtensionId = String(args.get("extension-id") || EXTENSION_ID);
+if (!/^[a-p]{32}$/.test(requestedExtensionId)) {
   console.error("Usage: retina-browser-bridge-install-host [--extension-id <32-char chrome extension id>] [--browser chrome|brave|edge|chromium|chrome_for_testing]");
   process.exit(2);
 }
+const extensionIds = Array.from(new Set([requestedExtensionId, EXTENSION_ID]));
 
 const browser = String(args.get("browser") || "chrome") as Browser;
 const hostPath = path.resolve(String(args.get("host-path") || path.join(process.cwd(), "dist", "native", "host.js")));
@@ -40,7 +41,7 @@ const manifest = {
   description: NATIVE_HOST_DESCRIPTION,
   path: wrapperPath,
   type: "stdio",
-  allowed_origins: [`chrome-extension://${extensionId}/`]
+  allowed_origins: extensionIds.map((extensionId) => `chrome-extension://${extensionId}/`)
 };
 
 await mkdir(path.dirname(wrapperPath), { recursive: true, mode: 0o700 });
