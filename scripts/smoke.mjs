@@ -16,7 +16,8 @@ if (!socketPath) {
 if (params.urlIncludes && !params.tabId) {
   const tabs = await callBridge("tabs_context_mcp", {});
   const needle = String(params.urlIncludes);
-  const tab = tabs.structuredContent?.tabs?.find((item) => item.url?.includes(needle));
+  const matches = tabs.structuredContent?.tabs?.filter((item) => item.url?.includes(needle)) || [];
+  const tab = matches.find((item) => item.active) || matches[0];
   if (!tab) {
     console.error(`No tab URL includes ${needle}`);
     console.error(JSON.stringify(tabs.structuredContent?.tabs || [], null, 2));
@@ -29,7 +30,8 @@ if (params.urlIncludes && !params.tabId) {
 if (params.titleIncludes && !params.tabId) {
   const tabs = await callBridge("tabs_context_mcp", {});
   const needle = String(params.titleIncludes).toLowerCase();
-  const tab = tabs.structuredContent?.tabs?.find((item) => item.title?.toLowerCase().includes(needle));
+  const matches = tabs.structuredContent?.tabs?.filter((item) => item.title?.toLowerCase().includes(needle)) || [];
+  const tab = matches.find((item) => item.active) || matches[0];
   if (!tab) {
     console.error(`No tab title includes ${needle}`);
     console.error(JSON.stringify(tabs.structuredContent?.tabs || [], null, 2));

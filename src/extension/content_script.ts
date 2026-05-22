@@ -295,13 +295,16 @@ async function humanClick(element: Element | null, coordinate: [number, number] 
 async function humanType(element: Element | null, text: string, settings: JsonObject): Promise<void> {
   const target = editableTarget(element);
   target.focus({ preventScroll: false });
-  for (const char of text) {
-    const keyEventInit = { key: char, bubbles: true, cancelable: true };
-    target.dispatchEvent(new KeyboardEvent("keydown", keyEventInit));
-    insertText(target, char);
-    target.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: char, inputType: "insertText" }));
-    target.dispatchEvent(new KeyboardEvent("keyup", keyEventInit));
-    await delay(randomBetween(numberSetting(settings, "typingMinDelayMs", 25), numberSetting(settings, "typingMaxDelayMs", 105)));
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    await delay(jitter(settings, 50));
+    setNativeInputValue(target, text);
+    target.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: text, inputType: "insertText" }));
+  } else {
+    for (const char of text) {
+      document.execCommand("insertText", false, char);
+      target.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: char, inputType: "insertText" }));
+      await delay(randomBetween(numberSetting(settings, "typingMinDelayMs", 25), numberSetting(settings, "typingMaxDelayMs", 105)));
+    }
   }
   target.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -381,15 +384,16 @@ function editableTarget(element: Element | null): HTMLElement {
   return target;
 }
 
-function insertText(target: HTMLElement, char: string): void {
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-    const start = target.selectionStart ?? target.value.length;
-    const end = target.selectionEnd ?? target.value.length;
-    target.value = `${target.value.slice(0, start)}${char}${target.value.slice(end)}`;
-    target.selectionStart = target.selectionEnd = start + char.length;
-  } else {
-    document.execCommand("insertText", false, char);
-  }
+function setNativeInputValue(target: HTMLInputElement | HTMLTextAreaElement, insertedText: string): void {
+  const start = target.selectionStart ?? target.value.length;
+  const end = target.selectionEnd ?? target.value.length;
+  const nextValue = `${target.value.slice(0, start)}${insertedText}${target.value.slice(end)}`;
+  const prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+  setter?.call(target, nextValue);
+  if (!setter) target.value = nextValue;
+  const cursor = start + insertedText.length;
+  target.setSelectionRange(cursor, cursor);
 }
 
 function ariaRole(element: Element): string {
@@ -539,4 +543,3 @@ function randomBetween(min: number, max: number): number {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
