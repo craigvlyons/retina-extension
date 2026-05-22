@@ -25,18 +25,33 @@ const interactiveSelector = [
   "[onclick]"
 ].join(",");
 
-const refToElement = new Map<string, WeakRef<Element>>();
-
-chrome.runtime.onMessage.addListener((request: ContentRequest, _sender, sendResponse) => {
-  void handleRequest(request).then(sendResponse).catch((error: unknown) => {
-    sendResponse({
-      ok: false,
-      code: "content_script_error",
-      message: error instanceof Error ? error.message : String(error)
-    });
+const globalState = globalThis as typeof globalThis & {
+  __retinaBridgeContentScript?: {
+    listenerInstalled: boolean;
+    refToElement: Map<string, WeakRef<Element>>;
+  };
+};
+const contentState =
+  globalState.__retinaBridgeContentScript ??
+  (globalState.__retinaBridgeContentScript = {
+    listenerInstalled: false,
+    refToElement: new Map<string, WeakRef<Element>>()
   });
-  return true;
-});
+const refToElement = contentState.refToElement;
+
+if (!contentState.listenerInstalled) {
+  contentState.listenerInstalled = true;
+  chrome.runtime.onMessage.addListener((request: ContentRequest, _sender, sendResponse) => {
+    void handleRequest(request).then(sendResponse).catch((error: unknown) => {
+      sendResponse({
+        ok: false,
+        code: "content_script_error",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
+    return true;
+  });
+}
 
 async function handleRequest(request: ContentRequest): Promise<ContentResponse> {
   switch (request.type) {
@@ -113,7 +128,7 @@ async function executeComputerAction(
 
   const target = input.ref || input.candidateId || input.expected?.stableRef || input.expected?.identifier;
   const element = target ? resolveElement(target) : elementFromCoordinate(input.coordinate);
-  if (!element && input.action !== "scroll" && !input.coordinate) {
+  if (!element && input.action !== "scroll" && input.action !== "key" && !input.coordinate) {
     return {
       ok: false,
       code: "stale_candidate",
@@ -313,9 +328,12 @@ async function humanKey(element: Element | null, key: string, settings: JsonObje
   const target = (element instanceof HTMLElement ? element : document.activeElement instanceof HTMLElement ? document.activeElement : document.body);
   target.focus?.({ preventScroll: false });
   await delay(jitter(settings, 40));
-  target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  const down = target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
   await delay(jitter(settings, 55));
   target.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true, cancelable: true }));
+  if (down && key === "Enter" && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && target.form) {
+    target.form.requestSubmit();
+  }
 }
 
 async function humanScroll(element: Element | null, input: ComputerActionInput, settings: JsonObject): Promise<void> {

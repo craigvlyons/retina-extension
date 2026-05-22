@@ -407,6 +407,13 @@ async function withPagePermission(request: ToolRequest, dispatch: () => Promise<
   }
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   const permission = await permissionStateForUrl(tab?.url);
+  if (request.method === "navigate") {
+    const destinationPermission = await permissionStateForUrl(stringParam(params, "url"));
+    if (destinationPermission !== "granted") {
+      return errorResponse(request, "permission_required", "origin_permission_required", "Grant the destination origin before navigating browser state.", { tabId, url: stringParam(params, "url") || null, permissionState: destinationPermission }, true);
+    }
+    return dispatch();
+  }
   if (permission !== "granted" && MUTATING_TOOLS.has(request.method)) {
     return errorResponse(request, "permission_required", "origin_permission_required", "Grant this origin in the Retina extension popup before mutating browser state.", { tabId, url: tab?.url || null, permissionState: permission }, true);
   }
