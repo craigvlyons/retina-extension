@@ -163,6 +163,8 @@ export type ComputerActionInput = {
   expected?: {
     stableRef?: string;
     identifier?: string;
+    value?: string;
+    text?: string;
   };
 };
 

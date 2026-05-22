@@ -290,17 +290,31 @@ async function computer(request: ToolRequest, settings: ExtensionSettings): Prom
     settings
   });
   if (!response.ok) {
-    const status = response.code === "stale_candidate" ? "stale_candidate" : "error";
+    const status = candidateValidationError(response.code) ? "stale_candidate" : "error";
+    observe("candidate_validation", "warn", "Browser candidate validation failed.", {
+      tabId,
+      action: input.action,
+      code: response.code || "content_script_error",
+      candidateId: input.candidateId || input.ref || null,
+      details: response.details || {}
+    });
     return errorResponse(
       request,
       status,
       response.code || "content_script_error",
       response.message || "Content script failed.",
       response.details || {},
-      response.code === "stale_candidate"
+      candidateValidationError(response.code)
     );
   }
   lastAction = `Computer action ${input.action}`;
+  if (input.candidateId || input.ref || input.expected) {
+    observe("candidate_validation", "info", "Browser candidate validation passed.", {
+      tabId,
+      action: input.action,
+      candidateId: input.candidateId || input.ref || null
+    });
+  }
   observe("browser_action", "info", `Dispatched ${input.action}.`, { tabId, action: input.action, candidateId: input.candidateId || input.ref || null });
 
   const settle = shouldWaitForNavigation(input, request.params || {})
@@ -711,6 +725,19 @@ function contentError(request: ToolRequest, response: { code?: string; message?:
 
 function observe(category: Parameters<typeof logger.observation>[0]["category"], severity: Parameters<typeof logger.observation>[0]["severity"], message: string, data: JsonObject): void {
   logger.observation({ v: 1, type: "event", event: "observation", category, severity, message, data });
+}
+
+function candidateValidationError(code: string | undefined): boolean {
+  return [
+    "stale_candidate",
+    "candidate_mismatch",
+    "candidate_not_visible",
+    "candidate_disabled",
+    "coordinate_mismatch",
+    "type_target_not_editable",
+    "type_value_mismatch",
+    "type_no_change"
+  ].includes(code || "");
 }
 
 function stringParam(params: JsonObject, key: string): string | undefined {

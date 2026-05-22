@@ -139,6 +139,8 @@ async function executeComputerAction(
     };
   }
 
+  const beforeEditableValue = element && input.action === "type" ? editableValue(element) : null;
+
   if (element) {
     const validation = validateCandidate(element, input);
     if (!validation.ok) return validation;
@@ -167,6 +169,11 @@ async function executeComputerAction(
         message: `Unsupported computer action: ${input.action}`,
         details: { action: input.action }
       };
+  }
+
+  if (element && input.action === "type") {
+    const typeValidation = validateTypedValue(element, input, beforeEditableValue);
+    if (!typeValidation.ok) return typeValidation;
   }
 
   const fresh = element ? elementToCandidate(element, tabId, frameId, true) : null;
@@ -290,6 +297,66 @@ function validateCandidate(element: Element, input: ComputerActionInput): Conten
   if (isDisabled(element)) {
     return { ok: false, code: "candidate_disabled", message: "Candidate is disabled.", details: { ref: input.ref || null } };
   }
+  if (input.coordinate) {
+    const [x, y] = input.coordinate;
+    const rect = element.getBoundingClientRect();
+    const tolerance = 2;
+    if (x < rect.left - tolerance || x > rect.right + tolerance || y < rect.top - tolerance || y > rect.bottom + tolerance) {
+      return {
+        ok: false,
+        code: "coordinate_mismatch",
+        message: "Click coordinate is outside the expected candidate bounds.",
+        details: { coordinate: input.coordinate, bounds: rectToBounds(rect), ref: input.ref || null }
+      };
+    }
+    const hit = document.elementFromPoint(x, y);
+    if (hit && hit !== element && !element.contains(hit)) {
+      return {
+        ok: false,
+        code: "coordinate_mismatch",
+        message: "Click coordinate resolves to a different page element.",
+        details: {
+          coordinate: input.coordinate,
+          expected: stableReference(element),
+          actual: stableReference(hit)
+        }
+      };
+    }
+  }
+  return { ok: true };
+}
+
+function validateTypedValue(
+  element: Element,
+  input: ComputerActionInput,
+  beforeValue: string | null
+): ContentResponse | { ok: true } {
+  const afterValue = editableValue(element);
+  if (afterValue === null) {
+    return {
+      ok: false,
+      code: "type_target_not_editable",
+      message: "Typing target is no longer editable after dispatch.",
+      details: { ref: input.ref || null }
+    };
+  }
+  const expectedValue = input.expected?.value ?? input.expected?.text;
+  if (expectedValue !== undefined && afterValue !== expectedValue) {
+    return {
+      ok: false,
+      code: "type_value_mismatch",
+      message: "Typed value did not match the expected value.",
+      details: { expected: expectedValue, actual: afterValue, before: beforeValue }
+    };
+  }
+  if (expectedValue === undefined && input.text && beforeValue === afterValue) {
+    return {
+      ok: false,
+      code: "type_no_change",
+      message: "Typing dispatched but the editable value did not change.",
+      details: { text: input.text, value: afterValue }
+    };
+  }
   return { ok: true };
 }
 
@@ -407,6 +474,16 @@ function editableTarget(element: Element | null): HTMLElement {
   const target = element instanceof HTMLElement ? element : document.activeElement instanceof HTMLElement ? document.activeElement : null;
   if (!target || !isEditable(target)) throw new Error("Typing requires an editable target.");
   return target;
+}
+
+function editableValue(element: Element): string | null {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    return element.value;
+  }
+  if (element instanceof HTMLElement && element.getAttribute("contenteditable") === "true") {
+    return element.innerText;
+  }
+  return null;
 }
 
 function setNativeInputValue(target: HTMLInputElement | HTMLTextAreaElement, insertedText: string): void {
