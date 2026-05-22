@@ -24,6 +24,7 @@ import type {
 
 type NativePort = chrome.runtime.Port;
 type DebugEvent = { tabId: number; ts: number; kind: "console" | "network"; level?: string; message?: string; url?: string; method?: string; status?: number; requestId?: string; data?: JsonObject };
+type NavigationSettleResult = { navigated: boolean; url?: string; status?: string; timedOut?: boolean };
 
 const logger = new BridgeLogger("retina-extension-service-worker", (line) => console.info(line));
 let nativePort: NativePort | null = null;
@@ -280,6 +281,7 @@ async function find(request: ToolRequest): Promise<ToolResponse> {
 async function computer(request: ToolRequest, settings: ExtensionSettings): Promise<ToolResponse> {
   const tabId = await targetTabId(request);
   const input = (request.params || {}) as ComputerActionInput;
+  const beforeTab = await chrome.tabs.get(tabId).catch(() => null);
   const response = await sendContent(tabId, {
     type: "retina_computer",
     tabId,
@@ -300,7 +302,33 @@ async function computer(request: ToolRequest, settings: ExtensionSettings): Prom
   }
   lastAction = `Computer action ${input.action}`;
   observe("browser_action", "info", `Dispatched ${input.action}.`, { tabId, action: input.action, candidateId: input.candidateId || input.ref || null });
-  return okResponse(request, { candidates: response.candidates || [], activeElement: response.activeElement || {} }, response.text || `Dispatched ${input.action}.`);
+
+  const settle = shouldWaitForNavigation(input, request.params || {})
+    ? await waitForNavigationSettle(tabId, beforeTab?.url, numberParam(request, "settleMs") ?? 2_500)
+    : { navigated: false };
+
+  if (settle.navigated) {
+    const settledPage = await sendContent(tabId, { type: "retina_read_page", tabId, frameId: numberParam(request, "frameId") ?? 0 });
+    if (settledPage.ok) {
+      return okResponse(
+        request,
+        {
+          title: settledPage.title,
+          url: settledPage.url,
+          candidates: settledPage.candidates || [],
+          activeElement: settledPage.activeElement || {},
+          navigation: settle
+        },
+        `Action ${input.action} dispatched and navigation settled.`
+      );
+    }
+  }
+
+  return okResponse(
+    request,
+    { candidates: response.candidates || [], activeElement: response.activeElement || {}, navigation: settle },
+    response.text || `Dispatched ${input.action}.`
+  );
 }
 
 async function formInput(request: ToolRequest, settings: ExtensionSettings): Promise<ToolResponse> {
@@ -439,6 +467,37 @@ async function sendContent(tabId: number, message: JsonObject): Promise<JsonObje
       details: { tabId }
     };
   }
+}
+
+function shouldWaitForNavigation(input: ComputerActionInput, params: JsonObject): boolean {
+  if (params.settle === false || params.waitForNavigation === false) return false;
+  return input.action === "left_click" || input.action === "key";
+}
+
+async function waitForNavigationSettle(tabId: number, initialUrl: string | undefined, timeoutMs: number): Promise<NavigationSettleResult> {
+  const started = Date.now();
+  let observedNavigation = false;
+  let lastUrl = initialUrl;
+  let lastStatus = "";
+
+  await delay(120);
+  while (Date.now() - started < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return { navigated: observedNavigation, status: "missing" };
+    lastUrl = tab.url;
+    lastStatus = tab.status || "";
+    if (tab.url && tab.url !== initialUrl) observedNavigation = true;
+    if (tab.status === "loading") observedNavigation = true;
+    if (observedNavigation && tab.status === "complete") {
+      await delay(150);
+      return { navigated: true, url: lastUrl, status: lastStatus };
+    }
+    await delay(100);
+  }
+
+  return observedNavigation
+    ? { navigated: true, url: lastUrl, status: lastStatus, timedOut: true }
+    : { navigated: false, url: lastUrl, status: lastStatus };
 }
 
 async function injectContentScript(tabId: number): Promise<void> {
@@ -666,4 +725,8 @@ function numberParam(request: ToolRequest, key: string): number | undefined {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

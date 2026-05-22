@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Retina Form Smoke</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 48px;
+        max-width: 680px;
+      }
+      label,
+      input,
+      textarea,
+      button,
+      a {
+        display: block;
+        font-size: 16px;
+        margin: 12px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Retina Form Smoke</h1>
+      <form id="smoke-form">
+        <label for="search">Search query</label>
+        <input id="search" name="q" autocomplete="off" placeholder="Type here">
+        <label for="notes">Notes</label>
+        <textarea id="notes" name="notes"></textarea>
+        <button id="submit" type="submit">Submit Form</button>
+      </form>
+      <p id="result" role="status">Waiting for input.</p>
+      <a id="nav-link" href="/done.html">Go to done page</a>
+    </main>
+    <script>
+      document.getElementById("smoke-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const query = new FormData(event.currentTarget).get("q") || "";
+        document.getElementById("result").textContent = `Submitted: ${query}`;
+      });
+    </script>
+  </body>
+</html>

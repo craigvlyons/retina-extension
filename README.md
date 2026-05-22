@@ -39,6 +39,7 @@ Deferred from the bridge plan: `gif_creator`, `upload_image`,
 ```sh
 npm install
 npm run build
+npm run build:prod
 npm test
 ```
 
@@ -47,6 +48,10 @@ The unpacked extension is written to:
 ```text
 dist/extension
 ```
+
+`npm run build` emits a development manifest with broad local smoke-test host
+permissions. `npm run build:prod` emits the stricter packaged manifest that uses
+runtime `optional_host_permissions`.
 
 ## Install For Local Testing
 
@@ -92,6 +97,24 @@ Retina or a test client can read `socketPath` from that file and send
 length-prefixed JSON tool requests using the same 32-bit little-endian framing as
 Chrome native messaging.
 
+## Smoke Tests
+
+List open tabs and verify the native bridge socket:
+
+```sh
+npm run smoke
+```
+
+Run the deterministic local form flow after Chrome has the unpacked development
+build loaded:
+
+```sh
+npm run smoke:form
+```
+
+That script serves `test/fixtures/form-smoke.html`, creates a tab, types into a
+form, submits it with Enter, clicks a link, and waits for navigation to settle.
+
 ## Open Decisions Answered
 
 - Native messaging first. Current Chrome docs keep `runtime.connectNative()` as
@@ -105,8 +128,9 @@ Chrome native messaging.
   `debugger` manifest permission to be listed as a normal permission rather than
   an optional permission.
 - Development builds declare `http://*/*` and `https://*/*` host permissions so
-  smoke tests can run without fighting Chrome's optional-permission prompt. The
-  popup grant/revoke path remains in place for a stricter packaged build.
+  smoke tests can run without fighting Chrome's optional-permission prompt.
+  Production builds move those patterns to `optional_host_permissions`, matching
+  Chrome's runtime-permission guidance for hosts discovered during use.
 - Session-owned tabs by default. The service worker records `sessionId` ownership
   when provided and rejects cross-session mutation.
 

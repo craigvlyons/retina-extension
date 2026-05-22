@@ -25,6 +25,8 @@ const interactiveSelector = [
   "[onclick]"
 ].join(",");
 
+const CANDIDATE_TEXT_MAX = 240;
+
 const globalState = globalThis as typeof globalThis & {
   __retinaBridgeContentScript?: {
     listenerInstalled: boolean;
@@ -206,7 +208,8 @@ function elementToCandidate(
   const bounds = rectToBounds(rect);
   const stableRef = stableReference(element);
   const role = ariaRole(element);
-  const displayName = accessibleName(element) || textFor(element) || role || element.tagName.toLowerCase();
+  const rawText = textFor(element);
+  const displayName = truncate(accessibleName(element) || rawText || role || element.tagName.toLowerCase(), CANDIDATE_TEXT_MAX);
   const identifier = selectorFor(element) || stableRef;
   const enabled = !isDisabled(element);
   refToElement.set(stableRef, new WeakRef(element));
@@ -215,7 +218,7 @@ function elementToCandidate(
     id: `browser:${tabId}:${frameId}:${stableRef}`,
     source: "browser",
     role,
-    displayName: displayName.slice(0, 240),
+    displayName,
     value: valueFor(element),
     identifier,
     stableRef,
@@ -231,7 +234,7 @@ function elementToCandidate(
       xpath: xpathFor(element),
       ariaRole: role,
       accessibleName: displayName,
-      text: textFor(element),
+      text: rawText,
       tagName: element.tagName.toLowerCase(),
       isVisible: visible,
       isEnabled: enabled
@@ -371,7 +374,11 @@ async function humanDrag(element: Element | null, input: ComputerActionInput, se
 }
 
 function readableText(maxChars: number): string {
-  const text = (document.body?.innerText || document.documentElement.textContent || "").replace(/\s+\n/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
+  const source = document.body || document.documentElement;
+  const rawText = source && "innerText" in source && typeof (source as HTMLElement).innerText === "string"
+    ? (source as HTMLElement).innerText
+    : textContentWithoutNoise(source);
+  const text = rawText.replace(/\s+\n/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
   return text.slice(0, maxChars);
 }
 
@@ -430,26 +437,43 @@ function implicitRole(element: Element): string {
 
 function accessibleName(element: Element): string {
   const aria = element.getAttribute("aria-label") || element.getAttribute("title");
-  if (aria) return aria.trim();
+  if (aria) return truncate(aria.trim(), CANDIDATE_TEXT_MAX);
   const labelledBy = element.getAttribute("aria-labelledby");
   if (labelledBy) {
-    return labelledBy
+    return truncate(labelledBy
       .split(/\s+/)
-      .map((id) => document.getElementById(id)?.innerText || "")
+      .map((id) => textFor(document.getElementById(id)))
       .join(" ")
-      .trim();
+      .trim(), CANDIDATE_TEXT_MAX);
   }
   if (element instanceof HTMLInputElement && element.labels?.length) {
-    return Array.from(element.labels).map((label) => label.innerText).join(" ").trim();
+    return truncate(Array.from(element.labels).map((label) => textFor(label)).join(" ").trim(), CANDIDATE_TEXT_MAX);
   }
   return "";
 }
 
-function textFor(element: Element): string {
+function textFor(element: Element | null | undefined): string {
+  if (!element) return "";
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    return element.placeholder || element.value;
+    return truncate(element.placeholder || element.value, CANDIDATE_TEXT_MAX);
   }
-  return (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 500);
+  if (["script", "style", "template", "noscript", "svg"].includes(element.tagName.toLowerCase())) return "";
+  const text = "innerText" in element && typeof (element as HTMLElement).innerText === "string"
+    ? (element as HTMLElement).innerText
+    : textContentWithoutNoise(element);
+  return truncate(text.replace(/\s+/g, " ").trim(), CANDIDATE_TEXT_MAX);
+}
+
+function textContentWithoutNoise(element: Element): string {
+  const clone = element.cloneNode(true) as Element;
+  for (const noisy of Array.from(clone.querySelectorAll("script,style,template,noscript,svg"))) {
+    noisy.remove();
+  }
+  return clone.textContent || "";
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
 function valueFor(element: Element): string | null {

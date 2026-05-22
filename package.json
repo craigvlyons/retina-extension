@@ -6,12 +6,14 @@
   "description": "Retina browser extension bridge with source Chrome MCP compatibility.",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:prod": "node scripts/build.mjs --prod",
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "install-host": "node dist/native/install_host.js",
     "host": "node dist/native/host.js",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:form": "node scripts/smoke_form.mjs"
   },
   "bin": {
     "retina-browser-bridge-host": "./dist/native/host.js",
