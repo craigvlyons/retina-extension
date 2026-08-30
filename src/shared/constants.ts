@@ -46,21 +46,11 @@ export const DEPLOYABLE_REQUIRED_CAPABILITIES = [
   "navigate",
   "console_read",
   "network_read",
-  "site_permission_gate",
+  "installed_agent_host_access",
   "visible_user_control"
 ] as const;
 
-export const MUTATING_TOOLS = new Set([
-  "computer",
-  "navigate",
-  "form_input",
-  "resize_window",
-  "upload_image",
-  "shortcuts_execute",
-  "javascript_tool"
-]);
-
-export const SITE_PERMISSION_TOOLS = new Set([
+export const PAGE_ACCESS_TOOLS = new Set([
   "javascript_tool",
   "read_page",
   "find",
@@ -91,7 +81,7 @@ export const VISIBLE_CONTROL_TOOLS = new Set([
 
 export const DEFAULT_SETTINGS = {
   controlEnabled: true,
-  debuggerEnabled: false,
+  debuggerEnabled: true,
   redactLogs: true,
   actionJitterMs: 60,
   typingMinDelayMs: 25,

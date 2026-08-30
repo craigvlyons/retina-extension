@@ -148,7 +148,7 @@ export type ObservationEvent = {
 };
 
 export type ComputerActionInput = {
-  action: "left_click" | "type" | "key" | "scroll" | "left_click_drag" | "wait" | string;
+  action: "left_click" | "type" | "set_value" | "select" | "key" | "scroll" | "left_click_drag" | "wait" | string;
   tabId?: number;
   frameId?: number;
   candidateId?: string;

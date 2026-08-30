@@ -128,7 +128,11 @@ async function executeComputerAction(
     return { ok: true, text: "Wait complete.", candidates: collectCandidates(tabId, frameId, false).slice(0, 40) };
   }
 
-  const target = input.ref || input.candidateId || input.expected?.stableRef || input.expected?.identifier;
+  // Retina's opaque candidate handle resolves privately to an expected stable
+  // reference. Prefer that identity over a structural selector, which may be
+  // non-unique on dense pages with repeated forms. If the stable reference is
+  // stale, fail closed instead of silently falling back to another match.
+  const target = input.expected?.stableRef || input.ref || input.candidateId || input.expected?.identifier;
   const element = target ? resolveElement(target) : elementFromCoordinate(input.coordinate);
   if (!element && input.action !== "scroll" && input.action !== "key" && !input.coordinate) {
     return {
@@ -139,7 +143,7 @@ async function executeComputerAction(
     };
   }
 
-  const beforeEditableValue = element && input.action === "type" ? editableValue(element) : null;
+  const beforeEditableValue = element && (input.action === "type" || input.action === "set_value" || input.action === "select") ? editableValue(element) : null;
 
   if (element) {
     const validation = validateCandidate(element, input);
@@ -153,6 +157,14 @@ async function executeComputerAction(
     case "type":
       await humanType(element, input.text ?? "", settings);
       break;
+    case "set_value":
+      await replaceEditableValue(element, input.text ?? "", settings);
+      break;
+    case "select": {
+      const selectResult = selectValue(element, input.text ?? "");
+      if (!selectResult.ok) return selectResult;
+      break;
+    }
     case "key":
       await humanKey(element, input.key || input.text || "", settings);
       break;
@@ -171,7 +183,9 @@ async function executeComputerAction(
       };
   }
 
-  if (element && input.action === "type") {
+  if (element && (input.action === "type" || input.action === "set_value" || input.action === "select")) {
+    const settleMs = Math.min(500, Math.max(50, numberSetting(settings, "postActionSettleMs", 150)));
+    await delay(settleMs);
     const typeValidation = validateTypedValue(element, input, beforeEditableValue);
     if (!typeValidation.ok) return typeValidation;
   }
@@ -194,13 +208,27 @@ function collectCandidates(tabId: number, frameId: number, includeHidden: boolea
 
 function collectElements(includeHidden: boolean): Element[] {
   const elements = new Set<Element>();
-  for (const element of Array.from(document.querySelectorAll(interactiveSelector))) {
-    if (includeHidden || isCandidateVisible(element)) elements.add(element);
-  }
-  for (const heading of Array.from(document.querySelectorAll("h1,h2,h3,label,[aria-live]"))) {
-    if (includeHidden || isCandidateVisible(heading)) elements.add(heading);
+  for (const root of queryRoots()) {
+    for (const element of Array.from(root.querySelectorAll(interactiveSelector))) {
+      if (includeHidden || isCandidateVisible(element)) elements.add(element);
+    }
+    for (const heading of Array.from(root.querySelectorAll("h1,h2,h3,label,[aria-live]"))) {
+      if (includeHidden || isCandidateVisible(heading)) elements.add(heading);
+    }
   }
   return Array.from(elements);
+}
+
+function queryRoots(): Array<Document | ShadowRoot> {
+  const roots: Array<Document | ShadowRoot> = [document];
+  for (let index = 0; index < roots.length; index += 1) {
+    const root = roots[index];
+    if (!root) continue;
+    for (const element of Array.from(root.querySelectorAll("*"))) {
+      if (element.shadowRoot && !roots.includes(element.shadowRoot)) roots.push(element.shadowRoot);
+    }
+  }
+  return roots;
 }
 
 function elementToCandidate(
@@ -216,7 +244,9 @@ function elementToCandidate(
   const stableRef = stableReference(element);
   const role = ariaRole(element);
   const rawText = textFor(element);
-  const displayName = truncate(accessibleName(element) || rawText || role || element.tagName.toLowerCase(), CANDIDATE_TEXT_MAX);
+  const accessible = accessibleNameWithProvenance(element);
+  const displayFallback = isEditable(element) ? editableDisplayFallback(element) : rawText;
+  const displayName = truncate(accessible.name || displayFallback || role || element.tagName.toLowerCase(), CANDIDATE_TEXT_MAX);
   const identifier = selectorFor(element) || stableRef;
   const enabled = !isDisabled(element);
   refToElement.set(stableRef, new WeakRef(element));
@@ -236,11 +266,16 @@ function elementToCandidate(
     rawFields: {
       tabId,
       frameId,
+      chromeFrameId: frameId,
+      framePath: shadowPath(element),
       url: location.href,
       cssSelector: selectorFor(element),
       xpath: xpathFor(element),
       ariaRole: role,
-      accessibleName: displayName,
+      accessibleName: accessible.name || null,
+      accessibleNameSource: accessible.source,
+      accessibleNameTrusted: accessible.trusted,
+      semanticAncestry: semanticAncestry(element),
       text: rawText,
       tagName: element.tagName.toLowerCase(),
       isVisible: visible,
@@ -254,11 +289,18 @@ function actionCapabilities(element: Element, enabled: boolean): BrowserCandidat
   if (!enabled) return caps;
   const tag = element.tagName.toLowerCase();
   const role = ariaRole(element);
-  if (["button", "a", "summary", "option"].includes(tag) || role === "button" || role === "link" || element.hasAttribute("onclick")) {
+  if (
+    ["button", "a", "summary", "option", "select"].includes(tag) ||
+    ["button", "link", "checkbox", "radio", "switch", "tab", "option", "combobox", "listbox", "menuitem"].includes(role) ||
+    element.hasAttribute("onclick")
+  ) {
     caps.push("browser_click");
   }
-  if (isEditable(element)) caps.push("type", "set_value");
-  caps.push("press", "scroll", "drag");
+  if (isTextEditable(element)) caps.push("type", "set_value");
+  else if (supportsSetValue(element)) caps.push("set_value");
+  if (isKeyboardActionTarget(element, role)) caps.push("press");
+  if (isScrollable(element, role)) caps.push("scroll");
+  if (isDraggable(element, role)) caps.push("drag");
   return Array.from(new Set(caps));
 }
 
@@ -300,16 +342,18 @@ function validateCandidate(element: Element, input: ComputerActionInput): Conten
   if (input.coordinate) {
     const [x, y] = input.coordinate;
     const rect = element.getBoundingClientRect();
+    const bounds = rectToBounds(rect);
     const tolerance = 2;
-    if (x < rect.left - tolerance || x > rect.right + tolerance || y < rect.top - tolerance || y > rect.bottom + tolerance) {
+    if (!bounds || x < bounds.x - tolerance || x > bounds.x + bounds.width + tolerance || y < bounds.y - tolerance || y > bounds.y + bounds.height + tolerance) {
       return {
         ok: false,
         code: "coordinate_mismatch",
         message: "Click coordinate is outside the expected candidate bounds.",
-        details: { coordinate: input.coordinate, bounds: rectToBounds(rect), ref: input.ref || null }
+        details: { coordinate: input.coordinate, bounds, ref: input.ref || null }
       };
     }
-    const hit = document.elementFromPoint(x, y);
+    const viewportPoint = toViewportPoint({ x, y });
+    const hit = document.elementFromPoint(viewportPoint.x, viewportPoint.y);
     if (hit && hit !== element && !element.contains(hit)) {
       return {
         ok: false,
@@ -341,12 +385,20 @@ function validateTypedValue(
     };
   }
   const expectedValue = input.expected?.value ?? input.expected?.text;
-  if (expectedValue !== undefined && afterValue !== expectedValue) {
+  const selectedOption = element instanceof HTMLSelectElement ? element.selectedOptions[0] : null;
+  const expectedMatchesSelection = selectedOption && expectedValue !== undefined
+    ? [selectedOption.value, selectedOption.label, selectedOption.text].some((value) => value === expectedValue)
+    : false;
+  if (expectedValue !== undefined && afterValue !== expectedValue && !expectedMatchesSelection) {
     return {
       ok: false,
       code: "type_value_mismatch",
       message: "Typed value did not match the expected value.",
-      details: { expected: expectedValue, actual: afterValue, before: beforeValue }
+      details: {
+        expectedLength: expectedValue.length,
+        actualLength: afterValue.length,
+        changed: beforeValue !== afterValue
+      }
     };
   }
   if (expectedValue === undefined && input.text && beforeValue === afterValue) {
@@ -354,14 +406,14 @@ function validateTypedValue(
       ok: false,
       code: "type_no_change",
       message: "Typing dispatched but the editable value did not change.",
-      details: { text: input.text, value: afterValue }
+      details: { textLength: input.text.length, changed: false }
     };
   }
   return { ok: true };
 }
 
 async function humanClick(element: Element | null, coordinate: [number, number] | undefined, settings: JsonObject): Promise<void> {
-  const point = coordinate ? { x: coordinate[0], y: coordinate[1] } : centerOf(element);
+  const point = coordinate ? toViewportPoint({ x: coordinate[0], y: coordinate[1] }) : centerOf(element);
   if (!point) throw new Error("Click requires a target element or coordinate.");
   const target = element || document.elementFromPoint(point.x, point.y);
   if (target instanceof HTMLElement) target.focus({ preventScroll: false });
@@ -373,8 +425,46 @@ async function humanClick(element: Element | null, coordinate: [number, number] 
   await delay(jitter(settings, 85));
   dispatchPointer(target || document.body, "pointerup", point);
   dispatchMouse(target || document.body, "mouseup", point);
-  dispatchMouse(target || document.body, "click", point);
+  // HTMLElement.click() runs the element's activation behavior, including form
+  // validation/submission for submit controls. Dispatching a separate synthetic
+  // click first activates the same control twice and can race framework-managed
+  // forms. Non-HTML SVG controls do not expose click(), so dispatch once there.
   if (target instanceof HTMLElement) target.click();
+  else dispatchMouse(target || document.body, "click", point);
+}
+
+function selectValue(element: Element | null, requestedValue: string): ContentResponse | { ok: true } {
+  if (!(element instanceof HTMLSelectElement)) {
+    return {
+      ok: false,
+      code: "select_target_not_selectable",
+      message: "Selecting a value requires a select control.",
+      details: { value: requestedValue }
+    };
+  }
+  const normalized = requestedValue.trim().toLocaleLowerCase();
+  const options = Array.from(element.options);
+  const option = options.find((candidate) =>
+    candidate.value === requestedValue || candidate.label === requestedValue || candidate.text === requestedValue
+  ) || options.find((candidate) =>
+    [candidate.value, candidate.label, candidate.text].some((value) => value.trim().toLocaleLowerCase() === normalized)
+  );
+  if (!option) {
+    return {
+      ok: false,
+      code: "invalid_select_value",
+      message: "The requested option is not available in this select control.",
+      details: {
+        value: requestedValue,
+        options: options.slice(0, 50).map((candidate) => candidate.label || candidate.text || candidate.value)
+      }
+    };
+  }
+  element.focus({ preventScroll: false });
+  element.value = option.value;
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+  return { ok: true };
 }
 
 async function humanType(element: Element | null, text: string, settings: JsonObject): Promise<void> {
@@ -391,6 +481,27 @@ async function humanType(element: Element | null, text: string, settings: JsonOb
       await delay(randomBetween(numberSetting(settings, "typingMinDelayMs", 25), numberSetting(settings, "typingMaxDelayMs", 105)));
     }
   }
+  target.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+async function replaceEditableValue(element: Element | null, text: string, settings: JsonObject): Promise<void> {
+  const target = editableTarget(element);
+  target.focus({ preventScroll: false });
+  await delay(jitter(settings, 50));
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    const prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    setter?.call(target, text);
+    if (!setter) target.value = text;
+  } else {
+    target.textContent = text;
+  }
+  target.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    cancelable: true,
+    data: text,
+    inputType: "insertReplacementText"
+  }));
   target.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
@@ -424,8 +535,8 @@ async function humanScroll(element: Element | null, input: ComputerActionInput, 
 }
 
 async function humanDrag(element: Element | null, input: ComputerActionInput, settings: JsonObject): Promise<void> {
-  const start = input.coordinate ? { x: input.coordinate[0], y: input.coordinate[1] } : centerOf(element);
-  const end = input.to ? { x: input.to[0], y: input.to[1] } : start ? { x: start.x + 100, y: start.y } : null;
+  const start = input.coordinate ? toViewportPoint({ x: input.coordinate[0], y: input.coordinate[1] }) : centerOf(element);
+  const end = input.to ? toViewportPoint({ x: input.to[0], y: input.to[1] }) : start ? { x: start.x + 100, y: start.y } : null;
   if (!start || !end) throw new Error("Drag requires start and end coordinates.");
   const target = element || document.elementFromPoint(start.x, start.y) || document.body;
   dispatchPointer(target, "pointerdown", start);
@@ -466,8 +577,53 @@ function isDisabled(element: Element): boolean {
 }
 
 function isEditable(element: Element): boolean {
-  const tag = element.tagName.toLowerCase();
-  return tag === "textarea" || tag === "input" || element.getAttribute("contenteditable") === "true";
+  return isTextEditable(element);
+}
+
+function isTextEditable(element: Element): boolean {
+  if (element instanceof HTMLTextAreaElement) return true;
+  if (element instanceof HTMLElement && element.getAttribute("contenteditable") === "true") return true;
+  if (!(element instanceof HTMLInputElement)) return false;
+  return ![
+    "button",
+    "checkbox",
+    "color",
+    "file",
+    "hidden",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "submit"
+  ].includes(element.type);
+}
+
+function supportsSetValue(element: Element): boolean {
+  if (isTextEditable(element) || element instanceof HTMLSelectElement) return true;
+  if (!(element instanceof HTMLInputElement)) return false;
+  return ["color", "date", "datetime-local", "month", "range", "time", "week"].includes(element.type);
+}
+
+function isKeyboardActionTarget(element: Element, role: string): boolean {
+  if (isTextEditable(element) || supportsSetValue(element)) return true;
+  if (element instanceof HTMLButtonElement || element instanceof HTMLSelectElement) return true;
+  if (element instanceof HTMLAnchorElement && element.hasAttribute("href")) return true;
+  if (element instanceof HTMLInputElement) return element.type !== "hidden";
+  if (element instanceof HTMLElement && element.tabIndex >= 0) return true;
+  return ["button", "link", "checkbox", "radio", "switch", "tab", "option", "combobox", "listbox", "menuitem", "slider", "spinbutton"].includes(role);
+}
+
+function isScrollable(element: Element, role: string): boolean {
+  if (["document", "webarea", "main", "feed"].includes(role)) return true;
+  if (!(element instanceof HTMLElement)) return false;
+  const style = getComputedStyle(element);
+  const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
+  return /(auto|scroll)/.test(overflow) && (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth);
+}
+
+function isDraggable(element: Element, role: string): boolean {
+  if (element instanceof HTMLInputElement && element.type === "range") return true;
+  return element.getAttribute("draggable") === "true" || role === "slider";
 }
 
 function editableTarget(element: Element | null): HTMLElement {
@@ -477,7 +633,7 @@ function editableTarget(element: Element | null): HTMLElement {
 }
 
 function editableValue(element: Element): string | null {
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
     return element.value;
   }
   if (element instanceof HTMLElement && element.getAttribute("contenteditable") === "true") {
@@ -495,7 +651,12 @@ function setNativeInputValue(target: HTMLInputElement | HTMLTextAreaElement, ins
   setter?.call(target, nextValue);
   if (!setter) target.value = nextValue;
   const cursor = start + insertedText.length;
-  target.setSelectionRange(cursor, cursor);
+  try {
+    target.setSelectionRange(cursor, cursor);
+  } catch {
+    // Number/date/color and other non-text input types do not expose a
+    // selection range. The insertion itself still completed.
+  }
 }
 
 function ariaRole(element: Element): string {
@@ -506,27 +667,79 @@ function implicitRole(element: Element): string {
   const tag = element.tagName.toLowerCase();
   if (tag === "a") return "link";
   if (tag === "button") return "button";
-  if (tag === "input") return (element as HTMLInputElement).type === "checkbox" ? "checkbox" : "textbox";
+  if (tag === "input") {
+    const input = element as HTMLInputElement;
+    if (["button", "image", "reset", "submit"].includes(input.type)) return "button";
+    if (input.type === "checkbox") return "checkbox";
+    if (input.type === "radio") return "radio";
+    if (input.type === "range") return "slider";
+    if (input.type === "number") return "spinbutton";
+    if (input.type === "search") return input.hasAttribute("list") ? "combobox" : "searchbox";
+    if (["email", "tel", "text", "url"].includes(input.type) && input.hasAttribute("list")) return "combobox";
+    return "textbox";
+  }
   if (tag === "textarea") return "textbox";
+  if (tag === "select") return (element as HTMLSelectElement).multiple || (element as HTMLSelectElement).size > 1 ? "listbox" : "combobox";
   if (/^h[1-6]$/.test(tag)) return "heading";
   return tag;
 }
 
-function accessibleName(element: Element): string {
-  const aria = element.getAttribute("aria-label") || element.getAttribute("title");
-  if (aria) return truncate(aria.trim(), CANDIDATE_TEXT_MAX);
+type AccessibleNameProvenance = {
+  name: string;
+  source: "aria_label" | "aria_labelledby" | "html_label" | "title" | "none";
+  trusted: boolean;
+};
+
+function accessibleNameWithProvenance(element: Element): AccessibleNameProvenance {
+  const ariaLabel = element.getAttribute("aria-label");
+  if (ariaLabel?.trim()) {
+    return {
+      name: truncate(ariaLabel.trim(), CANDIDATE_TEXT_MAX),
+      source: "aria_label",
+      trusted: true
+    };
+  }
   const labelledBy = element.getAttribute("aria-labelledby");
   if (labelledBy) {
-    return truncate(labelledBy
+    const name = truncate(labelledBy
       .split(/\s+/)
-      .map((id) => textFor(document.getElementById(id)))
+      .map((id) => staticLabelText(document.getElementById(id)))
       .join(" ")
       .trim(), CANDIDATE_TEXT_MAX);
+    if (name) return { name, source: "aria_labelledby", trusted: true };
   }
   if (element instanceof HTMLInputElement && element.labels?.length) {
-    return truncate(Array.from(element.labels).map((label) => textFor(label)).join(" ").trim(), CANDIDATE_TEXT_MAX);
+    const name = truncate(
+      Array.from(element.labels).map((label) => staticLabelText(label)).join(" ").trim(),
+      CANDIDATE_TEXT_MAX
+    );
+    if (name) return { name, source: "html_label", trusted: true };
   }
-  return "";
+  const title = element.getAttribute("title");
+  if (title?.trim()) {
+    return {
+      name: truncate(title.trim(), CANDIDATE_TEXT_MAX),
+      source: "title",
+      trusted: true
+    };
+  }
+  return { name: "", source: "none", trusted: false };
+}
+
+function accessibleName(element: Element): string {
+  return accessibleNameWithProvenance(element).name;
+}
+
+function staticLabelText(element: Element | null | undefined): string {
+  if (!element) return "";
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+  ) {
+    return "";
+  }
+  return textFor(element);
 }
 
 function textFor(element: Element | null | undefined): string {
@@ -561,13 +774,23 @@ function valueFor(element: Element): string | null {
 }
 
 function stableReference(element: Element): string {
-  const durable = element.getAttribute("data-testid") || element.id || element.getAttribute("name") || element.getAttribute("aria-label");
+  const durable = element.getAttribute("data-retina-ref") || element.getAttribute("data-testid") || element.id || element.getAttribute("name") || element.getAttribute("aria-label");
   if (durable) return `dom:${hash(`${element.tagName}:${durable}`)}`;
-  return `dom:${hash(`${selectorFor(element)}:${accessibleName(element)}:${textFor(element).slice(0, 120)}`)}`;
+  const stableText = isEditable(element) ? editableDisplayFallback(element) : textFor(element).slice(0, 120);
+  return `dom:${hash(`${selectorFor(element)}:${accessibleName(element)}:${stableText}`)}`;
+}
+
+function editableDisplayFallback(element: Element): string {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    return truncate(element.placeholder.trim(), CANDIDATE_TEXT_MAX);
+  }
+  return "";
 }
 
 function selectorFor(element: Element): string | null {
   if (element.id) return `#${cssEscape(element.id)}`;
+  const retinaRef = element.getAttribute("data-retina-ref");
+  if (retinaRef) return `[data-retina-ref="${cssEscape(retinaRef)}"]`;
   const testId = element.getAttribute("data-testid");
   if (testId) return `[data-testid="${cssEscape(testId)}"]`;
   const name = element.getAttribute("name");
@@ -582,6 +805,57 @@ function selectorFor(element: Element): string | null {
     current = current.parentElement;
   }
   return parts.length ? parts.join(" > ") : null;
+}
+
+function shadowPath(element: Element): string | null {
+  const parts: string[] = [];
+  let root = element.getRootNode();
+  while (root instanceof ShadowRoot) {
+    const host = root.host;
+    parts.unshift(`${selectorFor(host) || host.tagName.toLowerCase()}#shadow`);
+    root = host.getRootNode();
+  }
+  return parts.length ? parts.join("/") : null;
+}
+
+function semanticAncestry(element: Element): string[] {
+  const ancestry: string[] = [];
+  let current = semanticParent(element);
+  while (current && ancestry.length < 12) {
+    const descriptor = semanticAncestorDescriptor(current);
+    if (descriptor) ancestry.unshift(descriptor);
+    current = semanticParent(current);
+  }
+  return ancestry;
+}
+
+function semanticParent(element: Element): Element | null {
+  if (element.parentElement) return element.parentElement;
+  const root = element.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+
+function semanticAncestorDescriptor(element: Element): string | null {
+  const role = ariaRole(element);
+  const semanticRole = ["div", "span", "section", "body", "html"].includes(role)
+    ? (element.getAttribute("role") || "")
+    : role;
+  const explicitName = safeAncestorText(accessibleName(element));
+  const heading = Array.from(element.children)
+    .find((child) => /^h[1-6]$/i.test(child.tagName)) as Element | undefined;
+  const headingText = safeAncestorText(heading ? textFor(heading) : "");
+  const name = [explicitName, headingText]
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(" — ");
+  if (!semanticRole && !name) return null;
+  const normalizedRole = safeAncestorText(semanticRole || "group") || "group";
+  return truncate(name ? `[${normalizedRole}] ${name}` : `[${normalizedRole}]`, 192);
+}
+
+function safeAncestorText(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized || /https?:\/\/|[A-Za-z]:\\|\\|@/.test(normalized)) return "";
+  return truncate(normalized, 160);
 }
 
 function xpathFor(element: Element): string {
@@ -605,6 +879,10 @@ function rectToBounds(rect: DOMRect): Rect | null {
   return { x: rect.left + window.scrollX, y: rect.top + window.scrollY, width: rect.width, height: rect.height };
 }
 
+function toViewportPoint(point: { x: number; y: number }): { x: number; y: number } {
+  return { x: point.x - window.scrollX, y: point.y - window.scrollY };
+}
+
 function centerOf(element: Element | null): { x: number; y: number } | null {
   if (!element) return null;
   const rect = element.getBoundingClientRect();
@@ -613,7 +891,9 @@ function centerOf(element: Element | null): { x: number; y: number } | null {
 }
 
 function elementFromCoordinate(coordinate?: [number, number]): Element | null {
-  return coordinate ? document.elementFromPoint(coordinate[0], coordinate[1]) : null;
+  if (!coordinate) return null;
+  const point = toViewportPoint({ x: coordinate[0], y: coordinate[1] });
+  return document.elementFromPoint(point.x, point.y);
 }
 
 function dispatchPointer(target: Element, type: string, point: { x: number; y: number }): void {
@@ -626,7 +906,7 @@ function dispatchMouse(target: Element, type: string, point: { x: number; y: num
 
 function safeQueryAll(selector: string): Element[] {
   try {
-    return Array.from(document.querySelectorAll(selector));
+    return queryRoots().flatMap((root) => Array.from(root.querySelectorAll(selector)));
   } catch {
     return [];
   }

@@ -1,10 +1,9 @@
 import {
   COMPATIBILITY_SERVER_NAME,
   DEFAULT_SETTINGS,
-  MUTATING_TOOLS,
   NATIVE_HOST_ID,
+  PAGE_ACCESS_TOOLS,
   RETINA_BROWSER_BRIDGE_KIND,
-  SITE_PERMISSION_TOOLS,
   SOURCE_CHROME_MCP_COMPATIBILITY_PROTOCOL,
   VISIBLE_CONTROL_TOOLS
 } from "../shared/constants";
@@ -174,23 +173,23 @@ async function dispatchToolRequest(request: ToolRequest): Promise<ToolResponse> 
     case "tabs_create_mcp":
       return tabsCreate(request);
     case "read_page":
-      return withPagePermission(request, () => readPage(request));
+      return withPageAccess(request, () => readPage(request));
     case "get_page_text":
-      return withPagePermission(request, () => getPageText(request));
+      return withPageAccess(request, () => getPageText(request));
     case "find":
-      return withPagePermission(request, () => find(request));
+      return withPageAccess(request, () => find(request));
     case "computer":
-      return withPagePermission(request, () => computer(request, settings));
+      return withPageAccess(request, () => computer(request, settings));
     case "navigate":
-      return withPagePermission(request, () => navigate(request));
+      return withPageAccess(request, () => navigate(request));
     case "read_console_messages":
-      return withPagePermission(request, () => readConsoleMessages(request, settings));
+      return withPageAccess(request, () => readConsoleMessages(request, settings));
     case "read_network_requests":
-      return withPagePermission(request, () => readNetworkRequests(request, settings));
+      return withPageAccess(request, () => readNetworkRequests(request, settings));
     case "form_input":
-      return withPagePermission(request, () => formInput(request, settings));
+      return withPageAccess(request, () => formInput(request, settings));
     case "javascript_tool":
-      return withPagePermission(request, () => javascriptTool(request, settings));
+      return withPageAccess(request, () => javascriptTool(request, settings));
     case "resize_window":
       return resizeWindow(request);
     case "shortcuts_list":
@@ -249,7 +248,7 @@ async function tabsCreate(request: ToolRequest): Promise<ToolResponse> {
 
 async function readPage(request: ToolRequest): Promise<ToolResponse> {
   const tabId = await targetTabId(request);
-  const response = await sendContent(tabId, { type: "retina_read_page", tabId, frameId: numberParam(request, "frameId") ?? 0 });
+  const response = await sendContent(tabId, { type: "retina_read_page", tabId, frameId: numberParam(request, "frameId") ?? -1 });
   if (!response.ok) return contentError(request, response);
   observe("page_read", "info", "Read page structure.", { tabId, candidateCount: response.candidates?.length || 0 });
   return okResponse(request, { title: response.title, url: response.url, text: response.text, candidates: response.candidates || [], activeElement: response.activeElement || {} }, `Read ${response.candidates?.length || 0} page candidates.`);
@@ -268,7 +267,7 @@ async function find(request: ToolRequest): Promise<ToolResponse> {
   const response = await sendContent(tabId, {
     type: "retina_find",
     tabId,
-    frameId: numberParam(request, "frameId") ?? 0,
+    frameId: numberParam(request, "frameId") ?? -1,
     query: stringParam(params, "query") || stringParam(params, "text"),
     selector: stringParam(params, "selector"),
     role: stringParam(params, "role"),
@@ -281,22 +280,23 @@ async function find(request: ToolRequest): Promise<ToolResponse> {
 async function computer(request: ToolRequest, settings: ExtensionSettings): Promise<ToolResponse> {
   const tabId = await targetTabId(request);
   const input = (request.params || {}) as ComputerActionInput;
+  const actionKind = safeActionKind(input.action);
+  const targetProvided = Boolean(input.candidateId || input.ref || input.expected);
+  const frameId = numberParam(request, "frameId") ?? numberParam(request, "chromeFrameId") ?? 0;
   const beforeTab = await chrome.tabs.get(tabId).catch(() => null);
   const response = await sendContent(tabId, {
     type: "retina_computer",
     tabId,
-    frameId: numberParam(request, "frameId") ?? 0,
+    frameId,
     input,
     settings
   });
   if (!response.ok) {
     const status = candidateValidationError(response.code) ? "stale_candidate" : "error";
     observe("candidate_validation", "warn", "Browser candidate validation failed.", {
-      tabId,
-      action: input.action,
+      actionKind,
       code: response.code || "content_script_error",
-      candidateId: input.candidateId || input.ref || null,
-      details: response.details || {}
+      targetProvided
     });
     return errorResponse(
       request,
@@ -307,22 +307,31 @@ async function computer(request: ToolRequest, settings: ExtensionSettings): Prom
       candidateValidationError(response.code)
     );
   }
-  lastAction = `Computer action ${input.action}`;
-  if (input.candidateId || input.ref || input.expected) {
+  lastAction = `Computer action ${actionKind}`;
+  if (targetProvided) {
     observe("candidate_validation", "info", "Browser candidate validation passed.", {
-      tabId,
-      action: input.action,
-      candidateId: input.candidateId || input.ref || null
+      actionKind,
+      targetProvided: true
     });
   }
-  observe("browser_action", "info", `Dispatched ${input.action}.`, { tabId, action: input.action, candidateId: input.candidateId || input.ref || null });
+  observe("browser_action", "info", "Browser action dispatched.", {
+    actionKind,
+    targetProvided,
+    navigationWaitEnabled: shouldWaitForNavigation(input, request.params || {})
+  });
 
-  const settle = shouldWaitForNavigation(input, request.params || {})
+  const settle: NavigationSettleResult = shouldWaitForNavigation(input, request.params || {})
     ? await waitForNavigationSettle(tabId, beforeTab?.url, numberParam(request, "settleMs") ?? 2_500)
     : { navigated: false };
+  observe("browser_action", settle.timedOut ? "warn" : "info", "Browser action settle completed.", {
+    actionKind,
+    navigated: settle.navigated,
+    timedOut: Boolean(settle.timedOut),
+    status: settle.status || "unchanged"
+  });
 
   if (settle.navigated) {
-    const settledPage = await sendContent(tabId, { type: "retina_read_page", tabId, frameId: numberParam(request, "frameId") ?? 0 });
+    const settledPage = await sendContent(tabId, { type: "retina_read_page", tabId, frameId });
     if (settledPage.ok) {
       return okResponse(
         request,
@@ -352,8 +361,10 @@ async function formInput(request: ToolRequest, settings: ExtensionSettings): Pro
       ...request,
       method: "computer",
       params: {
-        action: "type",
+        action: "set_value",
         tabId: params.tabId,
+        frameId: params.frameId ?? params.chromeFrameId,
+        chromeFrameId: params.chromeFrameId ?? params.frameId,
         ref: stringParam(params, "ref") || stringParam(params, "selector") || stringParam(params, "candidateId"),
         text: stringParam(params, "text") || stringParam(params, "value") || ""
       }
@@ -437,30 +448,15 @@ function shortcutsList(request: ToolRequest): ToolResponse {
   }, "Shortcut list returned.");
 }
 
-async function withPagePermission(request: ToolRequest, dispatch: () => Promise<ToolResponse>): Promise<ToolResponse> {
+async function withPageAccess(request: ToolRequest, dispatch: () => Promise<ToolResponse>): Promise<ToolResponse> {
   const params = request.params || {};
-  if (!SITE_PERMISSION_TOOLS.has(request.method)) return dispatch();
+  if (!PAGE_ACCESS_TOOLS.has(request.method)) return dispatch();
   let tabId: number;
   try {
     tabId = await targetTabId(request);
   } catch {
     if (request.method === "tabs_create_mcp") return dispatch();
     throw new Error("No target tab is available.");
-  }
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
-  const permission = await permissionStateForUrl(tab?.url);
-  if (request.method === "navigate") {
-    const destinationPermission = await permissionStateForUrl(stringParam(params, "url"));
-    if (destinationPermission !== "granted") {
-      return errorResponse(request, "permission_required", "origin_permission_required", "Grant the destination origin before navigating browser state.", { tabId, url: stringParam(params, "url") || null, permissionState: destinationPermission }, true);
-    }
-    return dispatch();
-  }
-  if (permission !== "granted" && MUTATING_TOOLS.has(request.method)) {
-    return errorResponse(request, "permission_required", "origin_permission_required", "Grant this origin in the Retina extension popup before mutating browser state.", { tabId, url: tab?.url || null, permissionState: permission }, true);
-  }
-  if (permission !== "granted" && ["read_page", "get_page_text", "find", "read_console_messages", "read_network_requests"].includes(request.method)) {
-    return errorResponse(request, "permission_required", "origin_permission_required", "Grant this origin in the Retina extension popup before reading page content.", { tabId, url: tab?.url || null, permissionState: permission }, true);
   }
   if (typeof params.sessionId === "string" && sessionTabs.has(tabId) && sessionTabs.get(tabId) !== params.sessionId) {
     return errorResponse(request, "permission_required", "tab_owned_by_another_session", "This tab is owned by another Retina browser session.", { tabId, owner: sessionTabs.get(tabId) }, true);
@@ -470,8 +466,36 @@ async function withPagePermission(request: ToolRequest, dispatch: () => Promise<
 
 async function sendContent(tabId: number, message: JsonObject): Promise<JsonObject & { ok: boolean; code?: string; message?: string; candidates?: BrowserCandidate[]; matches?: BrowserCandidate[]; text?: string; title?: string; url?: string; activeElement?: JsonObject; details?: JsonObject }> {
   try {
-    await injectContentScript(tabId);
-    return await chrome.tabs.sendMessage(tabId, message);
+    const requestedFrameId = typeof message.frameId === "number" ? message.frameId : 0;
+    const collectAllFrames = requestedFrameId === -1 && (message.type === "retina_read_page" || message.type === "retina_find");
+    const frameIds = await injectContentScript(tabId, collectAllFrames);
+    const targetFrameIds = collectAllFrames ? frameIds : [Math.max(0, requestedFrameId)];
+    const responses = [];
+    for (const frameId of targetFrameIds) {
+      try {
+        responses.push(await chrome.tabs.sendMessage(tabId, { ...message, frameId }, { frameId }));
+      } catch (error) {
+        if (frameId === 0 || !collectAllFrames) throw error;
+        logger.debug("Skipping inaccessible child frame", {
+          tabId,
+          frameId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    const successful = responses.filter((response) => response?.ok);
+    if (!successful.length) return responses[0];
+    if (!collectAllFrames) return successful[0];
+    const main = successful.find((response) => response.activeElement) || successful[0];
+    return {
+      ok: true,
+      title: main.title,
+      url: main.url,
+      text: successful.map((response) => response.text || "").filter(Boolean).join("\n\n"),
+      candidates: successful.flatMap((response) => response.candidates || []),
+      matches: successful.flatMap((response) => response.matches || []),
+      activeElement: main.activeElement || {}
+    };
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
     return {
@@ -514,9 +538,48 @@ async function waitForNavigationSettle(tabId: number, initialUrl: string | undef
     : { navigated: false, url: lastUrl, status: lastStatus };
 }
 
-async function injectContentScript(tabId: number): Promise<void> {
+async function injectContentScript(tabId: number, settleAllFrames: boolean): Promise<number[]> {
   try {
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: false }, files: ["content_script.js"] });
+    const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["content_script.js"] });
+    if (!settleAllFrames) {
+      return Array.from(new Set(results.map((result) => result.frameId))).sort((left, right) => left - right);
+    }
+    // Programmatic all-frame injection does not report related-origin documents such as
+    // about:srcdoc in every Chromium build. The manifest content script covers those
+    // documents via match_origin_as_fallback; webNavigation supplies their numeric frame
+    // ids so reads and actions can address each listener directly.
+    const frameIds = new Set(results.map((result) => result.frameId));
+    const started = Date.now();
+    const minimumStableAt = started + 200;
+    const deadline = started + 750;
+    let previousSignature: string | null = null;
+    let stablePolls = 0;
+
+    do {
+      const navigationFrames = await chrome.webNavigation.getAllFrames({ tabId }).catch((error) => {
+        logger.debug("Unable to enumerate child frames", {
+          tabId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        return null;
+      });
+      for (const frame of navigationFrames || []) frameIds.add(frame.frameId);
+
+      const signature = Array.from(frameIds).sort((left, right) => left - right).join(",");
+      stablePolls = signature === previousSignature ? stablePolls + 1 : 0;
+      previousSignature = signature;
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+
+      // A declarative content script installs listeners in frames created while this
+      // bounded settle loop runs. Require two matching observations once navigation is
+      // complete so a child created just after the initial injection is not omitted.
+      if (Date.now() >= minimumStableAt
+        && ((tab?.status === "complete" && stablePolls >= 1) || stablePolls >= 2)) break;
+      if (Date.now() >= deadline) break;
+      await delay(50);
+    } while (true);
+
+    return Array.from(frameIds).sort((left, right) => left - right);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.debug("Content script injection failed", { tabId, message });
@@ -583,27 +646,19 @@ function recordDebuggerEvent(tabId: number, method: string, params: JsonObject):
 }
 
 async function permissionStateForUrl(url: string | undefined): Promise<BrowserTabRecord["permissionState"]> {
-  const origin = originPattern(url);
-  if (!origin) return "blocked";
-  const granted = await chrome.permissions.contains({ origins: [origin] }).catch(() => false);
-  return granted ? "granted" : "withheld";
-}
-
-function originPattern(url: string | undefined): string | null {
-  if (!url) return null;
+  if (!url) return "blocked";
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    return `${parsed.origin}/*`;
+    return ["http:", "https:", "file:"].includes(parsed.protocol) ? "granted" : "blocked";
   } catch {
-    return null;
+    return "blocked";
   }
 }
 
 function validateNavigationUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (!["http:", "https:", "file:"].includes(parsed.protocol)) return null;
     return parsed.href;
   } catch {
     return null;
@@ -650,20 +705,6 @@ async function handlePopupMessage(message: unknown): Promise<JsonObject> {
   if (message.type === "retina_toggle_debugger") {
     const settings = await getSettings();
     await setSettings({ ...settings, debuggerEnabled: Boolean(message.enabled) });
-    return { ok: true, state: await popupState() };
-  }
-  if (message.type === "retina_grant_origin") {
-    const tab = await activeTab();
-    const origin = originPattern(tab?.url);
-    if (!origin) return { ok: false, message: "This page cannot receive origin permission." };
-    const granted = await chrome.permissions.request({ origins: [origin] });
-    return { ok: granted, state: await popupState() };
-  }
-  if (message.type === "retina_revoke_origin") {
-    const tab = await activeTab();
-    const origin = originPattern(tab?.url);
-    if (!origin) return { ok: false, message: "This page does not have a revocable origin." };
-    await chrome.permissions.remove({ origins: [origin] });
     return { ok: true, state: await popupState() };
   }
   if (message.type === "retina_disconnect_native") {
@@ -738,6 +779,12 @@ function candidateValidationError(code: string | undefined): boolean {
     "type_value_mismatch",
     "type_no_change"
   ].includes(code || "");
+}
+
+function safeActionKind(action: string | undefined): string {
+  return ["left_click", "type", "set_value", "select", "key", "scroll", "left_click_drag", "wait"].includes(action || "")
+    ? action as string
+    : "unknown";
 }
 
 function stringParam(params: JsonObject, key: string): string | undefined {

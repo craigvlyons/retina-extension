@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Retina Browser Bridge",
-  "version": "0.1.0",
+  "version": "0.1.12",
   "description": "Source-compatible browser automation bridge for Retina.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6i74fY/HeOHi2XOXC4w0YSjerWSWr84M/Cumh5I2g90F1aZdOn6mYpqc3BzK57xr2cG6rl2BZulTeSErglNGg4Z4poMJSIT0D88B0vo/LJz2FD8faGFJIH5K1uS5pedMLVDDwEkvMA6HvCIB+o/F2nMEDoO9xRlLnkYoMW6WsB/BcM4cBALLC+h6Js6N5aKY+IDLwvmpUtWD7QR6VUGu7oWUq83ntZM2Y5nFC8leVxEkS/D9kzL+yXjXKllQiVp3bWBDzcGsOIwfgq6RlyNfTOLeitHnxRSGZiwLjUKwgVWTp4I+TJLH0mZVU1gDoLjaS/bVTyybsb9TyxJEdMK0UQIDAQAB",
   "minimum_chrome_version": "133",
@@ -12,6 +12,7 @@
     "storage",
     "tabs",
     "windows",
+    "webNavigation",
     "debugger"
   ],
   "background": {
@@ -22,14 +23,22 @@
     "default_title": "Retina Browser Bridge",
     "default_popup": "popup.html"
   },
-  "optional_host_permissions": [
-    "http://*/*",
-    "https://*/*"
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
   ],
   "web_accessible_resources": [
     {
       "resources": ["content_script.js"],
-      "matches": ["http://*/*", "https://*/*"]
+      "matches": ["<all_urls>"]
     }
   ]
 }

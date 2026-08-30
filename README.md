@@ -9,8 +9,7 @@ Standalone MV3 browser extension and native host for Retina's source-compatible
 - MV3 service worker with a long-lived native messaging port.
 - Native host with Chrome native-message framing and a local Retina-facing Unix
   socket.
-- Popup user control with pause/resume, per-origin grant/revoke, debugger toggle,
-  and host disconnect.
+- Popup user control with pause/resume, debugger toggle, and host disconnect.
 - Main-frame browser tools:
   - `tabs_context_mcp`
   - `tabs_create_mcp`
@@ -49,14 +48,75 @@ The unpacked extension is written to:
 dist/extension
 ```
 
-`npm run build` emits a development manifest with broad local smoke-test host
-permissions. `npm run build:prod` emits the stricter packaged manifest that uses
-runtime `optional_host_permissions`.
+`npm run build:prod` also publishes the versioned, consumer-ready artifact to:
+
+```text
+dist/artifacts/retina-extension/<package-version>
+```
+
+For version `0.1.3`, the promoted directory is
+`dist/artifacts/retina-extension/0.1.3`. It contains the production
+`manifest.json`, all extension assets, `extension-distribution.json`, and
+`extension-artifact-manifest.json`. The distribution contract is generated from
+`package.json`, declares the fixed extension ID
+`lefpojfbfejboofinaodnoadplihdbhm`, and describes the supported browser loading
+channel and machine-readable next actions. The artifact manifest declares the
+matching extension version and ID, points at that distribution contract, and
+contains a deterministic SHA-256 inventory of every other regular file. The
+inventory excludes only
+`extension-artifact-manifest.json` because a file cannot contain its own stable
+hash. Publication and validation reject symbolic links, path escapes, duplicate
+entries, unlisted files, stale hashes, and manifest identity/version mismatch.
+
+Validate the default published artifact independently with:
+
+```sh
+npm run validate:artifact
+```
+
+Or validate an explicitly promoted directory:
+
+```sh
+npm run validate:artifact -- C:\artifacts\retina-extension\0.1.3
+```
+
+Newly published artifacts require and inventory the distribution contract.
+Previously promoted immutable artifacts remain independently verifiable, but do
+not retroactively acquire the contract.
+
+Both development and production manifests grant `<all_urls>` host access when
+the user installs/enables Retina. Installation is the browser-access consent
+boundary; the agent does not interrupt work with per-origin permission prompts.
+
+## Extension Distribution
+
+The currently supported release channel is explicit manual unpacked loading from
+the immutable versioned artifact directory. Chrome and Edge do not allow Retina
+or Gabanode to silently install an unpacked extension into a regular user
+profile. There is no published Chrome Web Store URL, Edge Add-ons URL, or signed
+enterprise-policy artifact yet, and the distribution contract deliberately
+reports each of those channels as unavailable instead of inventing one.
+
+For Chrome:
+
+1. Open `chrome://extensions/`.
+2. Enable Developer mode.
+3. Choose **Load unpacked**.
+4. Select the immutable artifact root containing `manifest.json`.
+5. Verify extension ID `lefpojfbfejboofinaodnoadplihdbhm`.
+
+For Edge, follow the same sequence at `edge://extensions/`.
+
+`extension-distribution.json` exposes these ordered action codes, exact setup
+URLs, channel availability, and the `statusContract` state-to-next-action map for
+Retina, terminal clients, desktop shells, and future UIs. See
+[`docs/extension-distribution.md`](docs/extension-distribution.md) for the stable
+contract and promotion rules.
 
 ## Install For Local Testing
 
 1. Build the project.
-2. Open `chrome://extensions`, enable Developer Mode, and load
+2. Open `chrome://extensions/`, enable Developer Mode, and load
    `dist/extension` as an unpacked extension.
 3. Install the native host manifest:
 
@@ -127,10 +187,10 @@ form, submits it with Enter, clicks a link, and waits for navigation to settle.
 - Debugger tooling is runtime opt-in from the popup, but Chrome requires the
   `debugger` manifest permission to be listed as a normal permission rather than
   an optional permission.
-- Development builds declare `http://*/*` and `https://*/*` host permissions so
-  smoke tests can run without fighting Chrome's optional-permission prompt.
-  Production builds move those patterns to `optional_host_permissions`, matching
-  Chrome's runtime-permission guidance for hosts discovered during use.
+- Development and production builds declare `<all_urls>` host permission. Retina
+  is an installed automation agent, so extension installation
+  grants browser access up front; the popup's Browser control toggle remains the
+  immediate user pause/resume boundary.
 - Session-owned tabs by default. The service worker records `sessionId` ownership
   when provided and rejects cross-session mutation.
 

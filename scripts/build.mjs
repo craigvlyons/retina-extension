@@ -1,16 +1,27 @@
 import esbuild from "esbuild";
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { publishExtensionArtifact, RETINA_EXTENSION_ID } from "./extension-artifact.mjs";
+import {
+  EXTENSION_DISTRIBUTION_FILE,
+  createExtensionDistribution
+} from "./extension-distribution.mjs";
 
 const root = process.cwd();
 const dist = path.join(root, "dist");
 const extensionDist = path.join(dist, "extension");
 const nativeDist = path.join(dist, "native");
+const packageMetadata = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const buildMode = process.env.RETINA_EXTENSION_BUILD === "production" || process.argv.includes("--prod") || process.argv.includes("--production")
   ? "production"
   : "development";
 
+if (typeof packageMetadata.version !== "string" || packageMetadata.version.trim() === "") {
+  throw new Error("package.json must contain a non-empty extension version");
+}
+await rm(extensionDist, { recursive: true, force: true });
+await rm(nativeDist, { recursive: true, force: true });
 await mkdir(extensionDist, { recursive: true });
 await mkdir(nativeDist, { recursive: true });
 
@@ -64,10 +75,40 @@ await Promise.all([
 for (const file of ["popup.html", "popup.css"]) {
   await cp(path.join("public", file), path.join(extensionDist, file));
 }
-await writeFile(path.join(extensionDist, "manifest.json"), `${JSON.stringify(await manifestForBuild(), null, 2)}\n`);
+const browserManifest = await manifestForBuild();
+if (browserManifest.version !== packageMetadata.version) {
+  throw new Error(
+    `Extension version mismatch: package.json=${packageMetadata.version}, manifest.json=${browserManifest.version}`
+  );
+}
+await writeFile(path.join(extensionDist, "manifest.json"), `${JSON.stringify(browserManifest, null, 2)}\n`);
+await writeFile(
+  path.join(extensionDist, EXTENSION_DISTRIBUTION_FILE),
+  `${JSON.stringify(createExtensionDistribution({
+    extensionId: RETINA_EXTENSION_ID,
+    extensionVersion: packageMetadata.version
+  }), null, 2)}\n`
+);
 
 if (existsSync("public/icons")) {
   await cp("public/icons", path.join(extensionDist, "icons"), { recursive: true });
+}
+
+if (buildMode === "production") {
+  const artifactDirectory = path.join(
+    dist,
+    "artifacts",
+    "retina-extension",
+    packageMetadata.version
+  );
+  const artifactManifest = await publishExtensionArtifact({
+    sourceDirectory: extensionDist,
+    artifactDirectory
+  });
+  console.log(
+    `Published Retina extension ${artifactManifest.extension_version} `
+    + `(${artifactManifest.extension_id}) to ${artifactDirectory}`
+  );
 }
 
 for (const file of ["host.js", "install_host.js"]) {
@@ -78,14 +119,11 @@ for (const file of ["host.js", "install_host.js"]) {
 
 async function manifestForBuild() {
   const manifest = JSON.parse(await readFile(path.join("public", "manifest.json"), "utf8"));
-  const broadHostPermissions = ["http://*/*", "https://*/*"];
+  const broadHostPermissions = ["<all_urls>"];
+  manifest.host_permissions = manifest.host_permissions || broadHostPermissions;
+  delete manifest.optional_host_permissions;
   if (buildMode === "development") {
-    manifest.host_permissions = broadHostPermissions;
-    delete manifest.optional_host_permissions;
-    manifest.description = `${manifest.description} Development build with broad local smoke-test host access.`;
-  } else {
-    manifest.optional_host_permissions = manifest.optional_host_permissions || broadHostPermissions;
-    delete manifest.host_permissions;
+    manifest.description = `${manifest.description} Development build.`;
   }
   return manifest;
 }

@@ -63,7 +63,7 @@ Retina currently gates dispatch through capabilities and source tool contracts i
 - `navigate`
 - `read_console_messages`
 - `read_network_requests`
-- site permission gating
+- broad installed-agent host access
 - visible user control
 
 The following source-compatible tools can follow after the first useful bridge:
@@ -429,7 +429,7 @@ records plus enough match context for the agent to decide.
 
 Execute source-shaped browser actions. All mutating actions require:
 
-- site permission granted
+- installed-agent host access available
 - visible user control available
 - tab still valid
 - candidate pre-check, when candidate-based
@@ -458,7 +458,7 @@ Actions must follow the same no-drift posture as Retina's native desktop layer.
 Pre-action validation:
 
 - refresh the target tab/frame if needed
-- confirm site permission is still granted
+- confirm the page is extension-accessible (Chrome internal pages remain protected)
 - confirm the candidate exists
 - confirm stable ref or identifier still matches
 - confirm visible and enabled state
@@ -484,15 +484,18 @@ Post-action validation:
 
 Minimum policy:
 
-- start with `activeTab`, `scripting`, `tabs`, `storage`, and native messaging
-- request host permissions per origin, not globally
-- keep `debugger` permission optional and visibly enabled
-- gate `javascript_tool`, debugger response bodies, cookies, local storage, and
-  file upload behind explicit capability flags
+- declare installed-agent `<all_urls>` access plus `scripting`, `tabs`,
+  `storage`, native messaging, and debugger support
+- treat extension installation/enabling as browser-access consent; do not add
+  per-origin or login-field prompts
+- keep the popup Browser Control switch as the obvious immediate pause/resume
+  boundary and show advanced browser-tool state clearly
+- allow normal login fields, including one-time-code inputs, while leaving
+  CAPTCHA and browser privacy/certificate interstitials for human review
 - redact secrets in logs, console, network, and observations
 - cap message sizes to Chrome native messaging limits
 - expose a popup or side panel showing active sessions, last action, current
-  origin permission, and a stop/disconnect button
+  page-access state, and a stop/disconnect button
 - record which agent/session owns a tab
 - do not allow one session to act on another session's owned tabs unless the
   user explicitly transfers or shares them
@@ -513,7 +516,7 @@ Minimum policy:
 - service worker
 - content script
 - popup or side panel status UI
-- extension storage for settings and per-origin permissions
+- extension storage for user control and advanced-tool settings
 - build/watch/test scripts
 
 ### Phase 3: Native Host Connection
@@ -560,6 +563,11 @@ Add pre/post validation before broadening tool surface.
 - extension id configuration
 - health/status CLI
 - uninstall and repair commands
+- versioned immutable extension artifact with a complete SHA-256 inventory
+- machine-readable distribution/loading contract with browser setup URLs and
+  status-to-next-action codes
+- manual unpacked onboarding until an actual store listing or signed enterprise
+  policy artifact exists
 
 ### Phase 8: Retina Integration
 
